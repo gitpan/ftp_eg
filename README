@@ -1,0 +1,10 @@
+These are the 4 examples that appeared in the FTP article in the
+second edition of The Perl Journal
+
+download    Example of downloading files from a FTP server, 1 by 1
+downmulti   Example of downloading multiple files at once
+fdcopy	    Example of copying files between two servers
+pasvcopy    Example of using PASV mode
+
+These example should work OK with a few minor tweaks. You will need to
+modify the FTP host name etc.

@@ -1,0 +1,85 @@
+#!/usr/bin/perl
+
+# Load the Net::FTP package
+use Net::FTP;
+
+# I will explain the use of this module later
+use File::Listing qw(parse_dir);
+
+# Some defaults
+# Look for files under this age (in seconds),
+# I shall use 7 days
+$age	  = 7*24*60*60;
+
+# The name of your nearest CPAN host, you will
+# need to change this
+
+$CPANhost = '****CPAN****';
+
+# The path to the CPAN/modules directory
+# You will probably need to CHANGE this
+
+$CPANpath = '/mirrors/CPAN/modules';
+
+
+# Create a new NET::FTP object
+
+# NOTE: I have also changed the timeout
+# value to be 60 seconds
+
+$ftp = Net::FTP->new($CPANhost, Timeout => 60) or
+	 die "Cannot contact $CPANhost: $!";
+
+
+
+# We shall login to the ftp server as anonymous
+# Specifying a login id stops any netrc lookup
+
+$ftp->login('anonymous') or
+    die "Cannot login ($CPANhost):" . $ftp->message;
+
+
+
+# Change the working directory
+$ftp->cwd($CPANpath) or
+    die "Cannot change directory ($CPANhost):" . $ftp->message;
+
+# Retrieve a recursive directory listing
+@ls = $ftp->ls('-lR');
+
+
+# We probably do want binary, although some files
+# may be ASCII :-)
+
+$ftp->binary();
+
+
+foreach $file (parse_dir(\@ls)) {
+    my($name, $type, $size, $mtime, $mode) = @$file;
+
+    # We only want to process plain files,
+    # we shall ignore symbolic links
+    next unless($type eq 'f');
+
+    # Check age of file against $age
+    # $mtime is a unix date value, that is
+    #   seconds since 1 Jan 1970
+    # $^T is the time this script started
+    #   as a unix date value
+    if($^T - $mtime < $age) {
+	print "Retrieving ",$name,"\n";
+
+	# Get the file from the ftp server
+	$ftp->get($name) or
+		warn "Could not get '$name', skipped: $!";
+    }
+
+}
+
+# Close the connection to the ftp server
+
+$ftp->quit or
+	die "Could not close the connection cleanly: $!";
+
+# We are done !
+exit;

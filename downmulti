@@ -1,0 +1,257 @@
+#!/usr/bin/perl
+
+
+# Load the modules we will need
+use Net::FTP;
+use File::Listing qw(parse_dir);
+# We will need to open/write some files
+use FileHandle; 
+
+# Some defaults
+# Look for files under this age (in seconds),
+# I shall use 7 days
+$age	  = 7*24*60*60;
+
+# The name of your nearest CPAN host, you will
+# need to change this
+
+$CPANhost = '****CPAN****';
+
+# The path to the CPAN/modules directory
+# You will probably need to CHANGE this
+$CPANpath = '/mirrors/CPAN/modules';
+
+# Create the initial connection
+$ftp = connection();
+
+# Retrieve a recursive directory listing
+@ls = $ftp->ls('-lR');
+
+# Set the transfer mode to binary
+$ftp->binary or
+    die "Cannot set binary mode: $!";
+
+# Create a list of files we want to get
+@files = ();
+foreach $file (parse_dir(\@ls)) {
+    my($name, $type, $size, $mtime, $mode) = @$file;
+
+    # We only want to process plain files
+    next unless($type eq 'f');
+
+    # Check age of file against $age
+    if($^T - $mtime < $age) {
+	push(@files, $name);
+    }
+
+}
+
+# The maximum number of connections to make
+$max_connection = 4;
+$max_connection = @files
+	if(@files < $max_connection);
+
+# Create a list of connections, we already have one
+@ftp = ($ftp);
+
+for($i = 1 ; $i < $max_connection ; $i++) {
+    my $ftp = connection();
+
+    $ftp->binary or
+	die "Cannot set binary mode: $!";
+
+    push(@ftp, $ftp);
+}
+
+print "Using ",scalar(@ftp)," connections,\n";
+print " to download ",scalar(@files)," files.\n";
+
+# Keep a list of data connections
+@data = ();
+
+# Initialise the fdset to be empty
+$fdset = "";
+
+# Prime the ftp servers with RETR commands
+while(@ftp && @files) {
+    my $ftp  = shift @ftp;
+    my $file = shift @files;
+    my($data,$fh) = init_xfer($ftp, $file);
+
+    push(@data, [$data, $fh]);
+}
+
+# Close any unused connections
+while(@ftp) {
+    my $ftp  = shift @ftp;
+    $ftp->close or
+	warn "Cannot close connection cleanly: $!";
+}
+
+# Loop while we have connections, connections will be closed
+# and removed from @data when xfer's finish and @files is empty
+
+while(@data) {
+    $nfound = select($rout=$fdset, undef, undef, undef);
+
+    next
+	unless($nfound);
+
+    die "select: $!"
+	if($nfound == -1);
+
+    my @d = @data;
+
+    # Empty @data, connections will be added back
+    # into @data if they are still in use
+
+    @data = ();
+
+    foreach $con (@d) {
+	my($data,$fh) = @$con;
+
+	# Do we have data waiting on this data
+	# connection ?
+
+	if(vec($rout, fileno($data),1)) {
+	    my $buf = "";
+
+	    # Read some data, this may block as there
+	    # may not be 1024 bytes ready for reading
+	    # but we cannot tell, If we want to
+	    # reduce the possible blocking time then
+	    # use a smaller number
+
+	    my $l = $data->read($buf, 1024);
+
+	    die "Error reading data: $!"
+		if($l < 0);
+
+	    if($l) {
+		# Write the data to the local file
+
+		syswrite($fh, $buf, $l)
+	    }
+	    else {
+		# The data transfer is complete, do
+		# the necessary ftp commands to
+		# close the data connection
+
+		my $ftp = finish_xfer($data, $fh);
+
+		# If the are still files left to pull
+		# then reuse this ftp connection
+		# for another xfer
+
+		if(@files) {
+		    my $file = shift @files;
+		    @$con = init_xfer($ftp, $file);
+		}
+		else {
+
+		# else close the ftp connection
+		# and remove it from @data
+
+		    $ftp->close or
+			warn "Cannot close connection cleanly: $!";
+
+		   # undef $con denotes that the connection
+		   # is no longer in use
+		   undef $con;
+		}
+	    }
+	}
+
+	# If the connection is still in use then
+	# place if back into @data
+
+	push(@data, $con)
+		if(defined $con);
+
+    }
+}
+
+# We are done !
+exit;
+
+# Create a new connection to the ftp server
+
+sub connection {
+    # Create a new NET::FTP object
+
+    # NOTE: I have also changed the timeout
+    # value to be 60 seconds
+
+    $ftp = Net::FTP->new($CPANhost, Timeout => 60) or
+	 die "Cannot contact $CPANhost: $!";
+
+    # We shall login to the ftp server as anonymous
+    # Specifying a login id stops any netrc lookup
+
+    $ftp->login('anonymous') or
+	die "Cannot login ($CPANhost):" . $ftp->message;
+
+    # Change the working directory
+
+    $ftp->cwd($CPANpath) or
+	die "Cannot change directory ($CPANhost):" . $ftp->message;
+
+    $ftp;
+}
+
+# Initialise a file transfer
+
+sub init_xfer {
+    my($ftp,$file) = @_;
+
+    # Send the retr command, and get a file descriptor
+    # for the socket
+
+    my $data = $ftp->retr($file) or
+	die "Cannot retrieve file '$file': $!";
+
+    # Locally store all files in the current
+    # directory
+
+    my $path = $file;
+    $path =~ s,.*/([^/]+)\Z,$1,;
+
+    # Open a filehandle to the local file
+
+    my $fh = FileHandle->new($path,"w") or
+	die "Cannot open file '$path': $!";
+
+    print "Retrieving $file as $path ...\n";
+
+    # Add data connection into fdset for select()
+
+    vec($fdset, fileno($data),1) = 1;
+
+    ($data, $fh);
+}
+
+# Cleanup after a file transfer has completed
+
+sub finish_xfer {
+    my($data, $fh) = @_;
+
+    # Get the ftp command object
+
+    my $ftp = $data->cmd;
+
+    # Remove data connection from fdset for select()
+
+    vec($fdset, fileno($data),1) = 0;
+
+    # Close the data connection
+
+    $data->close or
+	warn "Cannot close data connection: $!";
+
+    # Close the local file
+
+    close($fh) or
+	warn "Cannot close filehandle: $!";
+
+    $ftp;
+}

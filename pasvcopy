@@ -1,0 +1,65 @@
+#!/usr/bin/perl
+
+use Net::FTP;
+
+# Create connections to the remote servers
+
+$ftpf = Net::FTP->new('from') or
+	die "Cannot connect to 'from': $!";
+
+$ftpd = Net::FTP->new('dest') or
+	die "Cannot connect to 'dest': $!";
+
+# login to the servers
+
+$ftpf->login('anonymous') or
+    	die "Cannot login to 'from'";
+
+$ftpd->login('anonymous') or
+    	die "Cannot login to 'dest'";
+
+# Place both servers into the correct transfer
+# mode. In this case I am using ASCII
+
+$ftpf->ascii() &&  $ftpd->ascii() or
+	die "Cannot set ASCII mode: $!";
+
+# Send the PASV command to the destination server
+# This will return a port address
+
+$port = $ftpd->pasv or
+	die "Cannot put ftp host in passive mode: $!";
+
+# Send this port address to the source server
+# as the port to connect to for the next data
+# transfer
+
+$ftpf->port($port) or
+	die "Error sending port: $!";
+
+# Send the RETR and STOU commands to the servers
+
+$rfile = '/pub/testfile';
+
+$ftpf->retr($rfile) or
+	$ftpf->ok or die "Cannot retrieve '$rfile': $!";
+
+$sfile = '/pub/outfile2';
+
+$ftpd->stou($sfile) or
+	die "Cannot store '$sfile': $!";
+
+# Wait for the transfer to complete
+
+$ftpd->pasv_wait($ftpf) or
+	die "Transfer failed: $!";
+
+# Close the connections
+
+$fdf->close() &&  $fdd->close() or
+	die "Cannot close connections: $!";
+
+$ftpf->quit() && $ftpd->quit() or
+    	die "Cannot quit ftp connections: $!";
+
+exit;

@@ -1,0 +1,58 @@
+#!/usr/bin/perl
+
+use Net::FTP;
+
+# Create connections to the remote servers
+
+$ftpf = Net::FTP->new('from') or
+	die "Cannot connect to 'from': $!";
+
+$ftpd = Net::FTP->new('dest') or
+	die "Cannot connect to 'dest': $!";
+
+# login to the servers
+
+$ftpf->login('anonymous') or
+    	die "Cannot login to 'from'";
+
+$ftpd->login('anonymous') or
+    	die "Cannot login to 'dest'";
+
+# Place both servers into the correct transfer
+# mode. In this case I am using ASCII
+
+$ftpf->ascii() &&  $ftpd->ascii() or
+	die "Cannot set ASCII mode: $!";
+
+# Send the RETR command to the source server
+# and obtain a file descriptor
+
+$rfile = '/pub/testfile';
+
+$fdf = $ftpf->retr($rfile) or
+	die "Cannot retrieve '$rfile': $!";
+
+# Send the STOR command to the destination server
+# and obtain a file descriptor
+
+$sfile = '/pub/outfile';
+
+$fdd = $ftpd->stor($sfile) or
+	die "Cannot store '$sfile': $!";
+
+# Read and write the data between the two
+# file descriptors
+
+while($fdf->read($buf,1024)) {
+    $fdd->write($buf, length $buf);
+}
+
+# Close the connections
+
+$fdf->close() &&  $fdd->close() or
+	die "Cannot close connections: $!";
+
+$ftpf->quit() && $ftpd->quit() or
+    	die "Cannot quit ftp connections: $!";
+
+exit;
